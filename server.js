@@ -5,18 +5,11 @@ import dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 
 const app = express()
-const PORT = process.env.PORT || 4000
+const PORT = 3001
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash'
 
-app.use(cors())
+app.use(cors({ origin: 'http://localhost:5175' }))
 app.use(express.json({ limit: '2mb' }))
-
-const JSON_PROMPT = {
-  summary: (notes, language) => `You are an expert study assistant. Simplify the following notes into:\n1. ONE sentence TL;DR\n2. 5-7 key bullet points in simple language\n3. List of important terms with brief definitions\nRespond in JSON format:\n{\n  tldr: string,\n  keyPoints: string[],\n  terms: [{term: string, definition: string}]\n}\nIf student chose Urdu, respond in simple Roman Urdu.\n\nNotes:\n${notes}`,
-  flashcards: (notes) => `Create 8-10 flashcards from these notes. Respond ONLY in JSON:\n[{question: string, answer: string}]\n\nNotes:\n${notes}`,
-  quiz: (notes) => `Create 5 MCQ questions from these notes. Respond ONLY in JSON:\n[{question: string, options: [string], correct: string, explanation: string}]\n\nNotes:\n${notes}`
-}
 
 const parseJson = (text) => {
   try {
@@ -31,8 +24,8 @@ const parseJson = (text) => {
   }
 }
 
-const callGemini = async (prompt) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`
+const callGemini = async (contents) => {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`
 
   const response = await fetch(url, {
     method: 'POST',
@@ -40,15 +33,7 @@ const callGemini = async (prompt) => {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 1200,
-        topP: 0.95,
-        topK: 40
-      }
+      contents
     })
   })
 
@@ -65,33 +50,58 @@ const callGemini = async (prompt) => {
   return text.trim()
 }
 
-app.post('/api/notes', async (req, res) => {
+app.post('/api/generate', async (req, res) => {
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'Missing GEMINI_API_KEY in .env.local' })
   }
 
-  const { notes, language } = req.body
+  const { content, type } = req.body
 
-  if (!notes || !notes.trim()) {
-    return res.status(400).json({ error: 'No notes were provided.' })
+  if (!content || !content.trim()) {
+    return res.status(400).json({ error: 'No content provided.' })
   }
 
   try {
-    const summaryPrompt = JSON_PROMPT.summary(notes, language)
-    const flashcardsPrompt = JSON_PROMPT.flashcards(notes)
-    const quizPrompt = JSON_PROMPT.quiz(notes)
+    const instruction = `Analyze the following content and generate a study set in the exact JSON format below. Return only the JSON, no markdown or code blocks.
 
-    const [summaryText, flashcardsText, quizText] = await Promise.all([
-      callGemini(summaryPrompt),
-      callGemini(flashcardsPrompt),
-      callGemini(quizPrompt)
-    ])
+{
+  "summary": {
+    "tldr": "one sentence",
+    "keyPoints": ["point 1", "point 2", "point 3", "point 4", "point 5"],
+    "terms": [{"term": "word", "definition": "meaning"}]
+  },
+  "flashcards": [
+    {"question": "Q?", "answer": "A."}
+  ],
+  "quiz": [
+    {
+      "question": "Q?",
+      "options": ["A", "B", "C", "D"],
+      "correct": "A",
+      "explanation": "Because..."
+    }
+  ]
+}`
 
-    const summary = parseJson(summaryText)
-    const flashcards = parseJson(flashcardsText)
-    const quiz = parseJson(quizText)
+    let contents = []
 
-    res.json({ summary, flashcards, quiz })
+    if (type === 'text') {
+      const userPrompt = instruction + `\n\nContent: ${content}`
+      contents = [{
+        parts: [{ text: userPrompt }]
+      }]
+    } else if (type === 'image') {
+      contents = [{
+        parts: [
+          { inline_data: { mime_type: "image/jpeg", data: content } },
+          { text: instruction }
+        ]
+      }]
+    }
+
+    const text = await callGemini(contents)
+    const result = parseJson(text)
+    res.json(result)
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate study notes.' })
   }

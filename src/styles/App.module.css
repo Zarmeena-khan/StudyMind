@@ -1,8 +1,29 @@
-.app {
-  min-height: 100vh;
-  padding: 32px;
-  position: relative;
-  background: radial-gradient(circle at top left, rgba(201, 168, 76, 0.09), transparent 28%), radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.03), transparent 32%), #0d0d0d;
+.summaryTitle {
+  color: #c9a84c;
+}
+
+.termChip {
+  cursor: pointer;
+}
+
+.termDefinition {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(201, 168, 76, 0.1);
+  border-radius: 8px;
+}
+
+.flashProgress {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 8px;
+}
+
+.flashProgressBar {
+  height: 100%;
+  background: #c9a84c;
+  border-radius: 2px;
 }
 
 .heroBar {

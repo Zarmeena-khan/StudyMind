@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { createWorker } from 'tesseract.js'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
 import pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.js?url'
 import styles from './styles/App.module.css'
@@ -25,7 +24,8 @@ function App() {
   const [inputTab, setInputTab] = useState('paste')
   const [outputTab, setOutputTab] = useState('summary')
   const [rawText, setRawText] = useState('')
-  const [notes, setNotes] = useState('')
+  const [inputType, setInputType] = useState('text')
+  const [inputData, setInputData] = useState('')
   const [summary, setSummary] = useState(null)
   const [flashcards, setFlashcards] = useState([])
   const [quiz, setQuiz] = useState([])
@@ -34,7 +34,6 @@ function App() {
   const [error, setError] = useState('')
   const [pdfName, setPdfName] = useState('')
   const [imagePreview, setImagePreview] = useState('')
-  const [ocrProgress, setOcrProgress] = useState(0)
   const [flashIndex, setFlashIndex] = useState(0)
   const [cardFlipped, setCardFlipped] = useState(false)
   const [quizIndex, setQuizIndex] = useState(0)
@@ -43,7 +42,7 @@ function App() {
   const [score, setScore] = useState(0)
   const [quizComplete, setQuizComplete] = useState(false)
   const [copied, setCopied] = useState(false)
-  const workerRef = useRef(null)
+  const [selectedTerm, setSelectedTerm] = useState(null)
   const [currentPulse, setCurrentPulse] = useState(0)
 
   useEffect(() => {
@@ -88,7 +87,8 @@ function App() {
 
   const handleTextChange = (event) => {
     setRawText(event.target.value)
-    setNotes(event.target.value)
+    setInputType('text')
+    setInputData(event.target.value)
   }
 
   const fileToDataUrl = (file) =>
@@ -115,25 +115,6 @@ function App() {
     return output.trim()
   }
 
-  const extractImageText = async (file, previewUrl) => {
-    if (!workerRef.current) {
-      const worker = createWorker({
-        logger: (m) => {
-          if (m.status === 'recognizing text') {
-            setOcrProgress(Math.round(m.progress * 100))
-          }
-        }
-      })
-      workerRef.current = worker
-      await worker.load()
-      await worker.loadLanguage('eng')
-      await worker.initialize('eng')
-    }
-
-    const { data } = await workerRef.current.recognize(previewUrl)
-    return data.text.trim() || ''
-  }
-
   const handlePdfFile = async (file) => {
     try {
       setError('')
@@ -141,7 +122,8 @@ function App() {
       setStatus('Extracting PDF text…')
       const text = await extractPdfText(file)
       setRawText(text)
-      setNotes(text)
+      setInputType('text')
+      setInputData(text)
       setPdfName(file.name)
       setStatus('PDF notes ready to summarize')
     } catch (err) {
@@ -155,16 +137,16 @@ function App() {
     try {
       setError('')
       setLoading(true)
-      setStatus('Scanning handwritten notes…')
-      const previewUrl = await fileToDataUrl(file)
-      setImagePreview(previewUrl)
-      const text = await extractImageText(file, previewUrl)
-      const snippet = text || 'Handwritten notes detected. Ready to summarize.'
-      setRawText(snippet)
-      setNotes(text)
-      setStatus('Image notes are ready to summarize')
+      setStatus('Processing image…')
+      const dataUrl = await fileToDataUrl(file)
+      const base64 = dataUrl.split(',')[1]
+      setImagePreview(dataUrl)
+      setInputType('image')
+      setInputData(base64)
+      setRawText('Image uploaded, ready to generate study set.')
+      setStatus('Image ready to summarize')
     } catch (err) {
-      setError('Could not scan the image. Please upload a clearer photo.')
+      setError('Could not process the image.')
     } finally {
       setLoading(false)
     }
@@ -195,7 +177,7 @@ function App() {
   }
 
   const handleSubmit = async () => {
-    if (!notes.trim()) {
+    if (!inputData.trim()) {
       setError('Add your notes first to generate the study guide.')
       setStatus('Paste your notes to begin')
       return
@@ -205,10 +187,10 @@ function App() {
       setLoading(true)
       setError('')
       setStatus('AI is reading your notes…')
-      const response = await fetch('/api/notes', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes, language })
+        body: JSON.stringify({ content: inputData, type: inputType })
       })
 
       if (!response.ok) {
@@ -228,6 +210,7 @@ function App() {
       setFeedback('')
       setScore(0)
       setQuizComplete(false)
+      setSelectedTerm(null)
       setStatus('Your premium study set is ready')
     } catch (err) {
       setError(err.message)
@@ -238,7 +221,7 @@ function App() {
   }
 
   const copyNotes = async () => {
-    await navigator.clipboard.writeText(notes)
+    await navigator.clipboard.writeText(rawText)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1600)
   }
@@ -371,7 +354,7 @@ function App() {
 
           <div className={styles.quickPreview}>
             <h3 className={styles.previewTitle}>Raw note preview</h3>
-            <p className={styles.previewCopy}>{notes ? `${notes.slice(0, 220)}${notes.length > 220 ? '...' : ''}` : 'Your note text will appear here once you paste or upload content.'}</p>
+            <p className={styles.previewCopy}>{rawText ? `${rawText.slice(0, 220)}${rawText.length > 220 ? '...' : ''}` : 'Your note text will appear here once you paste or upload content.'}</p>
           </div>
         </section>
 
@@ -430,12 +413,17 @@ function App() {
 
                 <div className={styles.termsGrid}>
                   {summary.terms.map((item) => (
-                    <div key={item.term} className={styles.termChip}>
+                    <div key={item.term} className={styles.termChip} onClick={() => setSelectedTerm(selectedTerm?.term === item.term ? null : item)}>
                       <strong>{item.term}</strong>
-                      <span>{item.definition}</span>
                     </div>
                   ))}
                 </div>
+
+                {selectedTerm && (
+                  <div className={styles.termDefinition}>
+                    <strong>{selectedTerm.term}</strong>: {selectedTerm.definition}
+                  </div>
+                )}
               </div>
             )}
 
@@ -446,7 +434,12 @@ function App() {
                     <p className={styles.shortline}>Flashcard deck</p>
                     <h3>Review the key concepts</h3>
                   </div>
-                  <span className={styles.cardCounter}>{flashIndex + 1} of {flashcards.length}</span>
+                  <div>
+                    <span className={styles.cardCounter}>{flashIndex + 1} of {flashcards.length}</span>
+                    <div className={styles.flashProgress}>
+                      <div className={styles.flashProgressBar} style={{ width: `${((flashIndex + 1) / flashcards.length) * 100}%` }} />
+                    </div>
+                  </div>
                 </div>
 
                 <div className={styles.deckContainer}>
@@ -539,7 +532,7 @@ function App() {
                             type="button"
                             className={`${styles.optionCard} ${correct ? styles.correctOption : ''} ${wrong ? styles.wrongOption : ''}`}
                             onClick={() => handleAnswer(option)}
-                            disabled={Boolean(selectedAnswer)}
+                        Next Questionbled={Boolean(selectedAnswer)}
                           >
                             {option}
                           </button>

@@ -26,6 +26,7 @@ function App() {
   const [rawText, setRawText] = useState('')
   const [inputType, setInputType] = useState('text')
   const [inputData, setInputData] = useState('')
+  const [imageType, setImageType] = useState('image/jpeg')
   const [summary, setSummary] = useState(null)
   const [flashcards, setFlashcards] = useState([])
   const [quiz, setQuiz] = useState([])
@@ -143,6 +144,7 @@ function App() {
       setImagePreview(dataUrl)
       setInputType('image')
       setInputData(base64)
+      setImageType(file.type || 'image/jpeg')
       setRawText('Image uploaded, ready to generate study set.')
       setStatus('Image ready to summarize')
     } catch (err) {
@@ -190,7 +192,7 @@ function App() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: inputData, type: inputType })
+        body: JSON.stringify({ content: inputData, type: inputType, mimeType: imageType })
       })
 
       if (!response.ok) {
@@ -532,7 +534,7 @@ function App() {
                             type="button"
                             className={`${styles.optionCard} ${correct ? styles.correctOption : ''} ${wrong ? styles.wrongOption : ''}`}
                             onClick={() => handleAnswer(option)}
-                        Next Questionbled={Boolean(selectedAnswer)}
+                            disabled={Boolean(selectedAnswer)}
                           >
                             {option}
                           </button>

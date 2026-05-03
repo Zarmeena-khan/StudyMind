@@ -5,10 +5,10 @@ import dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 
 const app = express()
-const PORT = 3001
+const PORT = 4000
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 
-app.use(cors({ origin: 'http://localhost:5175' }))
+app.use(cors({ origin: 'http://localhost:5173' }))
 app.use(express.json({ limit: '2mb' }))
 
 const parseJson = (text) => {
@@ -24,8 +24,17 @@ const parseJson = (text) => {
   }
 }
 
-const callGemini = async (contents) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`
+const FALLBACK_MODELS = [
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro'
+]
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+const callGemini = async (contents, modelName) => {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`
 
   const response = await fetch(url, {
     method: 'POST',
@@ -37,12 +46,20 @@ const callGemini = async (contents) => {
     })
   })
 
+  const json = await response.json()
+
   if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`Gemini request failed: ${body}`)
+    const errorCode = json.error?.code
+    const errorMessage = json.error?.message || 'Unknown error'
+    const errorStatus = json.error?.status || ''
+
+    if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED') {
+      throw new Error('QUOTA_EXCEEDED')
+    }
+
+    throw new Error(`Gemini API error: ${errorMessage}`)
   }
 
-  const json = await response.json()
   const text = json.candidates?.[0]?.content?.parts?.[0]?.text
 
   if (!text) throw new Error('Empty response from Gemini')
@@ -50,12 +67,50 @@ const callGemini = async (contents) => {
   return text.trim()
 }
 
+const callGeminiWithRetry = async (contents, modelName, retries = 3) => {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await callGemini(contents, modelName)
+    } catch (error) {
+      if (error.message === 'QUOTA_EXCEEDED') {
+        if (attempt < retries - 1) {
+          const delay = Math.pow(2, attempt) * 1000
+          console.log(`Quota exceeded for ${modelName}, retrying in ${delay}ms...`)
+          await sleep(delay)
+          continue
+        }
+        throw error
+      }
+      throw error
+    }
+  }
+}
+
+const callGeminiWithFallback = async (contents) => {
+  let lastError = null
+
+  for (const model of FALLBACK_MODELS) {
+    try {
+      console.log(`Trying model: ${model}`)
+      return await callGeminiWithRetry(contents, model)
+    } catch (error) {
+      console.log(`Model ${model} failed: ${error.message}`)
+      lastError = error
+      if (error.message !== 'QUOTA_EXCEEDED') {
+        throw error
+      }
+    }
+  }
+
+  throw new Error('QUOTA_EXCEEDED')
+}
+
 app.post('/api/generate', async (req, res) => {
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'Missing GEMINI_API_KEY in .env.local' })
   }
 
-  const { content, type } = req.body
+  const { content, type, mimeType } = req.body
 
   if (!content || !content.trim()) {
     return res.status(400).json({ error: 'No content provided.' })
@@ -93,16 +148,21 @@ app.post('/api/generate', async (req, res) => {
     } else if (type === 'image') {
       contents = [{
         parts: [
-          { inline_data: { mime_type: "image/jpeg", data: content } },
+          { inline_data: { mime_type: mimeType || 'image/jpeg', data: content } },
           { text: instruction }
         ]
       }]
     }
 
-    const text = await callGemini(contents)
+    const text = await callGeminiWithFallback(contents)
     const result = parseJson(text)
     res.json(result)
   } catch (error) {
+    if (error.message === 'QUOTA_EXCEEDED') {
+      return res.status(429).json({
+        error: 'Quota limit reached. Please try again in a few minutes.'
+      })
+    }
     res.status(500).json({ error: error.message || 'Unable to generate study notes.' })
   }
 })
@@ -112,13 +172,11 @@ const startServer = (port) => {
     console.log(`StudyMind API is running on http://localhost:${port}`)
   }).on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
-      const nextPort = port + 1
-      console.warn(`Port ${port} is in use, trying ${nextPort}...`)
-      startServer(nextPort)
+      console.error(`Port ${port} is already in use. Stop the process using this port or update server.js to use a different port.`)
     } else {
       console.error('Server failed to start:', error)
-      process.exit(1)
     }
+    process.exit(1)
   })
 }
 

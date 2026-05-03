@@ -20,7 +20,6 @@ const outputTabs = [
 const statusPulses = ['AI is reading your notes', 'AI is refining the summary', 'AI is building your study set']
 
 function App() {
-  const [language, setLanguage] = useState('English')
   const [inputTab, setInputTab] = useState('paste')
   const [outputTab, setOutputTab] = useState('summary')
   const [rawText, setRawText] = useState('')
@@ -35,6 +34,8 @@ function App() {
   const [error, setError] = useState('')
   const [pdfName, setPdfName] = useState('')
   const [imagePreview, setImagePreview] = useState('')
+  const [pdfFile, setPdfFile] = useState(null)
+  const [imageFile, setImageFile] = useState(null)
   const [flashIndex, setFlashIndex] = useState(0)
   const [cardFlipped, setCardFlipped] = useState(false)
   const [quizIndex, setQuizIndex] = useState(0)
@@ -126,12 +127,32 @@ function App() {
       setInputType('text')
       setInputData(text)
       setPdfName(file.name)
+      setPdfFile({ name: file.name, size: file.size })
       setStatus('PDF notes ready to summarize')
     } catch (err) {
       setError('Unable to parse PDF. Please try a different file.')
     } finally {
       setLoading(false)
     }
+  }
+
+  const clearPdfFile = () => {
+    setPdfName('')
+    setPdfFile(null)
+    setRawText('')
+    setInputData('')
+    setInputType('text')
+    setStatus('Paste your notes to begin')
+  }
+
+  const clearImageFile = () => {
+    setImagePreview('')
+    setImageFile(null)
+    setRawText('')
+    setInputData('')
+    setInputType('text')
+    setImageType('image/jpeg')
+    setStatus('Paste your notes to begin')
   }
 
   const handleImageFile = async (file) => {
@@ -145,6 +166,7 @@ function App() {
       setInputType('image')
       setInputData(base64)
       setImageType(file.type || 'image/jpeg')
+      setImageFile({ name: file.name, size: file.size })
       setRawText('Image uploaded, ready to generate study set.')
       setStatus('Image ready to summarize')
     } catch (err) {
@@ -152,6 +174,12 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
   const processFileDrop = async (file) => {
@@ -276,13 +304,6 @@ function App() {
           </div>
           <p className={styles.tagline}>Turn your notes into knowledge</p>
         </div>
-        <button
-          type="button"
-          className={styles.langButton}
-          onClick={() => setLanguage((value) => (value === 'English' ? 'Urdu' : 'English'))}
-        >
-          {language}
-        </button>
       </header>
 
       <main className={styles.mainGrid}>
@@ -322,26 +343,67 @@ function App() {
             )}
 
             {(inputTab === 'pdf' || inputTab === 'image') && (
-              <div
-                className={styles.dropZone}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={handleDrop}
-              >
-                <div>
-                  <span className={styles.dropTitle}>Drag & drop {inputTab === 'pdf' ? 'PDF' : 'image'} here</span>
-                  <p className={styles.dropText}>Or click to upload a file from your device.</p>
-                  <input
-                    type="file"
-                    accept={inputTab === 'pdf' ? 'application/pdf' : 'image/*'}
-                    onChange={handleFileChange}
-                    className={styles.fileInput}
-                  />
-                </div>
-                {inputTab === 'pdf' && pdfName && <p className={styles.sourceLabel}>Loaded: {pdfName}</p>}
-                {inputTab === 'image' && imagePreview && (
-                  <img src={imagePreview} alt="Uploaded note" className={styles.imagePreview} />
+              <>
+                {inputTab === 'pdf' && !pdfFile && (
+                  <div
+                    className={styles.dropZone}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={handleDrop}
+                  >
+                    <div>
+                      <span className={styles.dropTitle}>Drag & drop PDF here</span>
+                      <p className={styles.dropText}>Or click to upload a file from your device.</p>
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={handleFileChange}
+                        className={styles.fileInput}
+                      />
+                    </div>
+                  </div>
                 )}
-              </div>
+
+                {inputTab === 'pdf' && pdfFile && (
+                  <div className={styles.filePreviewCard}>
+                    <button type="button" className={styles.removeFileButton} onClick={clearPdfFile}>✕</button>
+                    <div className={styles.fileIcon}>📄</div>
+                    <div className={styles.fileInfo}>
+                      <p className={styles.fileName}>{pdfFile.name}</p>
+                      <p className={styles.fileSize}>{formatFileSize(pdfFile.size)}</p>
+                    </div>
+                  </div>
+                )}
+
+                {inputTab === 'image' && !imageFile && (
+                  <div
+                    className={styles.dropZone}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={handleDrop}
+                  >
+                    <div>
+                      <span className={styles.dropTitle}>Drag & drop image here</span>
+                      <p className={styles.dropText}>Or click to upload a file from your device.</p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        className={styles.fileInput}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {inputTab === 'image' && imageFile && (
+                  <div className={styles.filePreviewCard}>
+                    <button type="button" className={styles.removeFileButton} onClick={clearImageFile}>✕</button>
+                    {imagePreview && <img src={imagePreview} alt="Preview" className={styles.imageThumbnail} />}
+                    <div className={styles.fileInfo}>
+                      <p className={styles.fileName}>{imageFile.name}</p>
+                      <p className={styles.fileSize}>{formatFileSize(imageFile.size)}</p>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             <div className={styles.controlsRow}>
@@ -436,18 +498,12 @@ function App() {
                     <p className={styles.shortline}>Flashcard deck</p>
                     <h3>Review the key concepts</h3>
                   </div>
-                  <div>
-                    <span className={styles.cardCounter}>{flashIndex + 1} of {flashcards.length}</span>
-                    <div className={styles.flashProgress}>
-                      <div className={styles.flashProgressBar} style={{ width: `${((flashIndex + 1) / flashcards.length) * 100}%` }} />
-                    </div>
-                  </div>
                 </div>
 
                 <div className={styles.deckContainer}>
                   <div className={styles.cardStack}>
                     {flashcards.slice(flashIndex + 1, flashIndex + 3).reverse().map((item, index) => (
-                      <div key={index} className={styles.stackCard} style={{ transform: `translateY(${12 + index * 8}px) scale(${0.94 - index * 0.02})` }} />
+                      <div key={index} className={styles.stackCard} style={{ transform: `translateY(${12 + index * 8}px) scale(${0.96 - index * 0.02})` }} />
                     ))}
                     <div
                       className={`${styles.flashCard} ${cardFlipped ? styles.flipped : ''}`}
@@ -458,14 +514,25 @@ function App() {
                     >
                       <div className={styles.flashCardInner}>
                         <div className={styles.flashFront}>
-                          <p className={styles.cardLabel}>Question</p>
-                          <p>{currentFlash.question || 'Your flashcard will appear here.'}</p>
+                          <p className={styles.cardLabel}>QUESTION</p>
+                          <div className={styles.cardContent}>
+                            <p>{currentFlash.question || 'Your flashcard will appear here.'}</p>
+                          </div>
                         </div>
                         <div className={styles.flashBack}>
-                          <p className={styles.cardLabel}>Answer</p>
-                          <p>{currentFlash.answer || 'Tap the card to reveal the answer.'}</p>
+                          <p className={styles.cardLabel}>ANSWER</p>
+                          <div className={styles.cardContent}>
+                            <p>{currentFlash.answer || 'Tap the card to reveal the answer.'}</p>
+                          </div>
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className={styles.flashMeta}>
+                    <span className={styles.cardCounter}>Card {flashIndex + 1} of {flashcards.length}</span>
+                    <div className={styles.flashProgress}>
+                      <div className={styles.flashProgressBar} style={{ width: `${((flashIndex + 1) / flashcards.length) * 100}%` }} />
                     </div>
                   </div>
 

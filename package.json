@@ -1,8 +1,7 @@
 {
-    
+
   "name": "study-mind",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "concurrently \"vite\" \"node server.js\"",
     "build": "vite build",

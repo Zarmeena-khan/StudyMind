@@ -11,85 +11,91 @@ const parseJson = (text) => {
   }
 }
 
-const FALLBACK_MODELS = [
-  'gemini-2.0-flash-lite',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro'
-]
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
-const callGemini = async (contents, modelName, apiKey) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`
+const callGroqText = async (prompt, apiKey) => {
+  const url = 'https://api.groq.com/openai/v1/chat/completions'
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      contents
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are StudyMind AI. Return ONLY valid JSON, no markdown, no backticks.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
     })
   })
 
   const json = await response.json()
 
   if (!response.ok) {
-    const errorCode = json.error?.code
     const errorMessage = json.error?.message || 'Unknown error'
-    const errorStatus = json.error?.status || ''
-
-    if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED') {
-      throw new Error('QUOTA_EXCEEDED')
-    }
-
-    throw new Error(`Gemini API error: ${errorMessage}`)
+    throw new Error(`Groq API error: ${errorMessage}`)
   }
 
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text
+  const text = json.choices?.[0]?.message?.content
 
-  if (!text) throw new Error('Empty response from Gemini')
+  if (!text) throw new Error('Empty response from Groq')
 
   return text.trim()
 }
 
-const callGeminiWithRetry = async (contents, modelName, apiKey, retries = 3) => {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      return await callGemini(contents, modelName, apiKey)
-    } catch (error) {
-      if (error.message === 'QUOTA_EXCEEDED') {
-        if (attempt < retries - 1) {
-          const delay = Math.pow(2, attempt) * 1000
-          console.log(`Quota exceeded for ${modelName}, retrying in ${delay}ms...`)
-          await sleep(delay)
-          continue
+const callGroqVision = async (prompt, base64Image, apiKey) => {
+  const url = 'https://api.groq.com/openai/v1/chat/completions'
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${base64Image}`
+              }
+            },
+            {
+              type: 'text',
+              text: prompt
+            }
+          ]
         }
-        throw error
-      }
-      throw error
-    }
-  }
-}
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  })
 
-const callGeminiWithFallback = async (contents, apiKey) => {
-  let lastError = null
+  const json = await response.json()
 
-  for (const model of FALLBACK_MODELS) {
-    try {
-      console.log(`Trying model: ${model}`)
-      return await callGeminiWithRetry(contents, model, apiKey)
-    } catch (error) {
-      console.log(`Model ${model} failed: ${error.message}`)
-      lastError = error
-      if (error.message !== 'QUOTA_EXCEEDED') {
-        throw error
-      }
-    }
+  if (!response.ok) {
+    const errorMessage = json.error?.message || 'Unknown error'
+    throw new Error(`Groq API error: ${errorMessage}`)
   }
 
-  throw new Error('QUOTA_EXCEEDED')
+  const text = json.choices?.[0]?.message?.content
+
+  if (!text) throw new Error('Empty response from Groq')
+
+  return text.trim()
 }
 
 module.exports = async function handler(req, res) {
@@ -105,10 +111,10 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+  const GROQ_API_KEY = process.env.GROQ_API_KEY
 
-  if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'Missing GEMINI_API_KEY environment variable' })
+  if (!GROQ_API_KEY) {
+    return res.status(500).json({ error: 'Missing GROQ_API_KEY environment variable' })
   }
 
   const { content, type, mimeType } = req.body
@@ -139,31 +145,18 @@ module.exports = async function handler(req, res) {
   ]
 }`
 
-    let contents = []
+    let text
 
     if (type === 'text') {
-      const userPrompt = instruction + `\n\nContent: ${content}`
-      contents = [{
-        parts: [{ text: userPrompt }]
-      }]
+      const prompt = instruction + `\n\nContent: ${content}`
+      text = await callGroqText(prompt, GROQ_API_KEY)
     } else if (type === 'image') {
-      contents = [{
-        parts: [
-          { inline_data: { mime_type: mimeType || 'image/jpeg', data: content } },
-          { text: instruction }
-        ]
-      }]
+      text = await callGroqVision(instruction, content, GROQ_API_KEY)
     }
 
-    const text = await callGeminiWithFallback(contents, GEMINI_API_KEY)
     const result = parseJson(text)
     res.json(result)
   } catch (error) {
-    if (error.message === 'QUOTA_EXCEEDED') {
-      return res.status(429).json({
-        error: 'Quota limit reached. Please try again in a few minutes.'
-      })
-    }
     res.status(500).json({ error: error.message || 'Unable to generate study notes.' })
   }
 }
